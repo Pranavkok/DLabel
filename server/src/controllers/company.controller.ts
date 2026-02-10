@@ -79,18 +79,29 @@ export async function createPost(req: AuthRequest, res: Response) {
     try {
         const companyId = req.companyId!;
         const {
+            datasetId,
             datasetName,
             labels,
             instructions,
             amountLocked,
+            durationDays,
+            transactionHash,
             verificationRequired,
             verificationDeadline,
         } = req.body;
 
-        if (!datasetName || !labels || !amountLocked) {
+        if (!datasetId || !datasetName || !labels || !amountLocked || !transactionHash) {
             return res.status(400).json({
-                error: "datasetName, labels, and amountLocked are required",
+                error: "datasetId, datasetName, labels, amountLocked, and transactionHash are required",
             });
+        }
+
+        if (typeof datasetId !== "string") {
+            return res.status(400).json({ error: "datasetId must be a string" });
+        }
+
+        if (typeof transactionHash !== "string" || !/^0x[a-fA-F0-9]{64}$/.test(transactionHash)) {
+            return res.status(400).json({ error: "transactionHash must be a valid transaction hash" });
         }
 
         const labelsArr = labels as string[];
@@ -106,6 +117,7 @@ export async function createPost(req: AuthRequest, res: Response) {
 
         const post = await prisma.post.create({
             data: {
+                id: datasetId,
                 companyId,
                 datasetName: datasetName as string,
                 totalImages: 0, // Will be updated when images are uploaded
@@ -117,7 +129,21 @@ export async function createPost(req: AuthRequest, res: Response) {
                 verificationRequired: verificationRequired !== false,
                 verificationDeadline: verificationDeadline
                     ? new Date(verificationDeadline as string)
+                    : durationDays
+                        ? new Date(Date.now() + Number(durationDays) * 24 * 60 * 60 * 1000)
                     : null,
+            },
+        });
+
+        await prisma.transaction.create({
+            data: {
+                companyId,
+                postId: post.id,
+                type: "DATASET_LOCK",
+                amount,
+                status: "COMPLETED",
+                transactionHash,
+                confirmedAt: new Date(),
             },
         });
 
@@ -134,6 +160,14 @@ export async function createPost(req: AuthRequest, res: Response) {
             },
         });
     } catch (error) {
+        if (
+            typeof error === "object" &&
+            error &&
+            "code" in error &&
+            (error as { code?: string }).code === "P2002"
+        ) {
+            return res.status(409).json({ error: "Dataset already exists" });
+        }
         console.error("Create post error:", error);
         return res.status(500).json({ error: "Internal server error" });
     }
