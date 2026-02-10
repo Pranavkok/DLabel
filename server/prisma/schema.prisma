@@ -17,6 +17,9 @@ model User {
   labelsVerifiedIncorrect Int @default(0) @map("labels_verified_incorrect")
   verificationsDone       Int @default(0) @map("verifications_done")
 
+  tokensEarned  Decimal @default(0) @map("tokens_earned") @db.Decimal(18, 6)
+  tokensClaimed Decimal @default(0) @map("tokens_claimed") @db.Decimal(18, 6)
+
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   lastActive DateTime @default(now()) @updatedAt @map("last_active") @db.Timestamp(6)
 
@@ -104,9 +107,9 @@ model Verification {
   verifierId String @map("verifier_id")
 
   verifiedAt DateTime @default(now()) @map("verified_at") @db.Timestamp(6)
-
-  data     Data @relation(fields: [dataId], references: [id], onDelete: Cascade)
-  verifier User @relation(fields: [verifierId], references: [id], onDelete: Cascade)
+  vote       VoteType // YES or NO
+  data       Data     @relation(fields: [dataId], references: [id], onDelete: Cascade)
+  verifier   User     @relation(fields: [verifierId], references: [id], onDelete: Cascade)
 
   @@unique([dataId, verifierId])
   @@index([dataId])
@@ -134,9 +137,9 @@ model Transaction {
   confirmedAt DateTime? @map("confirmed_at") @db.Timestamp(6)
 
   // Relations
-  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  post    Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  post    Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([companyId])
@@ -169,4 +172,9 @@ enum TransactionStatus {
   PENDING
   COMPLETED
   FAILED
+}
+
+enum VoteType {
+  YES
+  NO
 }
