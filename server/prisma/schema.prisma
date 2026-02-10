@@ -1,0 +1,172 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id         String  @id @default(uuid())
+  name       String? @db.VarChar(255)
+  reputation Int     @default(0)
+
+  labelsSubmitted         Int @default(0) @map("labels_submitted")
+  labelsVerifiedCorrect   Int @default(0) @map("labels_verified_correct")
+  labelsVerifiedIncorrect Int @default(0) @map("labels_verified_incorrect")
+  verificationsDone       Int @default(0) @map("verifications_done")
+
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  lastActive DateTime @default(now()) @updatedAt @map("last_active") @db.Timestamp(6)
+
+  labeledImages Data[]         @relation("Labeler")
+  verifications Verification[]
+  transactions  Transaction[]
+
+  @@index([reputation(sort: Desc)])
+  @@map("users")
+}
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String   @db.VarChar(255)
+  email     String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  posts        Post[]
+  transactions Transaction[]
+
+  @@map("companies")
+}
+
+model Post {
+  id        String @id @default(uuid())
+  companyId String @map("company_id")
+
+  datasetName String @map("dataset_name") @db.VarChar(255)
+  totalImages Int    @map("total_images")
+
+  amountLocked      Decimal @map("amount_locked") @db.Decimal(18, 6)
+  labelingPool      Decimal @map("labeling_pool") @db.Decimal(18, 6) // 70%
+  verificationPool  Decimal @map("verification_pool") @db.Decimal(18, 6) // 30%
+  amountDistributed Decimal @default(0) @map("amount_distributed") @db.Decimal(18, 6)
+
+  labels       Json // Array of strings: ["dog", "cat", "bird"]
+  instructions String? @db.Text
+
+  verificationRequired Boolean @default(true) @map("verification_required")
+
+  status PostStatus @default(ACTIVE)
+
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  verificationDeadline DateTime? @map("verification_deadline") @db.Timestamp(6)
+  completedAt          DateTime? @map("completed_at") @db.Timestamp(6)
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  data         Data[]
+  transactions Transaction[]
+
+  @@index([companyId])
+  @@index([status])
+  @@map("posts")
+}
+
+model Data {
+  id     String @id @default(uuid())
+  postId String @map("post_id")
+
+  value Int @default(0)
+
+  imageUrl String @map("image_url") @db.Text
+
+  status        DataStatus @default(UNLABELED)
+  assignedLabel String?    @map("assigned_label") @db.VarChar(255)
+
+  labeledBy String?   @map("labeled_by")
+  labeledAt DateTime? @map("labeled_at") @db.Timestamp(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  post          Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  labeler       User?          @relation("Labeler", fields: [labeledBy], references: [id], onDelete: SetNull)
+  verifications Verification[]
+
+  @@index([postId])
+  @@index([status])
+  @@index([labeledBy])
+  @@map("data")
+}
+
+model Verification {
+  id         String @id @default(uuid())
+  dataId     String @map("data_id")
+  verifierId String @map("verifier_id")
+
+  verifiedAt DateTime @default(now()) @map("verified_at") @db.Timestamp(6)
+
+  data     Data @relation(fields: [dataId], references: [id], onDelete: Cascade)
+  verifier User @relation(fields: [verifierId], references: [id], onDelete: Cascade)
+
+  @@unique([dataId, verifierId])
+  @@index([dataId])
+  @@index([verifierId])
+  @@map("verifications")
+}
+
+model Transaction {
+  id        String  @id @default(uuid())
+  userId    String? @map("user_id")
+  companyId String? @map("company_id")
+  postId    String? @map("post_id")
+
+  type   TransactionType
+  amount Decimal         @db.Decimal(18, 6)
+
+  // Blockchain
+  transactionHash String?           @map("transaction_hash") @db.VarChar(66)
+  status          TransactionStatus @default(PENDING)
+
+  // Metadata (flexible JSON for extra info)
+  metadata Json?
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamp(6)
+
+  // Relations
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  post    Post?    @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([companyId])
+  @@index([postId])
+  @@index([type])
+  @@index([transactionHash])
+  @@map("transactions")
+}
+
+enum PostStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+}
+
+enum DataStatus {
+  UNLABELED
+  PENDING_VERIFICATION
+  VERIFIED
+}
+
+enum TransactionType {
+  LABELING
+  VERIFICATION
+  WITHDRAWAL
+  DATASET_LOCK
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
