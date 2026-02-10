@@ -5,11 +5,20 @@ import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from "wagmi";
+import { parseEther } from "viem";
+import { sepolia } from "wagmi/chains";
+import { CONTRACT_ABI, CONTRACT_ADDRESS } from "@/lib/contract";
 
 export default function CompanyPosts() {
-    const { token } = useAuth();
+    const { token, company } = useAuth();
     const searchParams = useSearchParams();
     const showCreate = searchParams.get("create") === "true";
+    const { address, isConnected } = useAccount();
+    const chainId = useChainId();
+    const publicClient = usePublicClient();
+    const { switchChainAsync } = useSwitchChain();
+    const { writeContractAsync } = useWriteContract();
 
     const [posts, setPosts] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -21,6 +30,7 @@ export default function CompanyPosts() {
     const [labels, setLabels] = useState("");
     const [instructions, setInstructions] = useState("");
     const [amountLocked, setAmountLocked] = useState("");
+    const [durationDays, setDurationDays] = useState("30");
     const [verificationRequired, setVerificationRequired] = useState(true);
 
     useEffect(() => {
@@ -34,17 +44,62 @@ export default function CompanyPosts() {
         if (!token) return;
         setSaving(true);
         try {
+            if (!isConnected || !address) {
+                throw new Error("Please connect your wallet before creating a post.");
+            }
+
+            if (!company) {
+                throw new Error("Company session not found. Please log in again.");
+            }
+
+            if (company.walletAddress.toLowerCase() !== address.toLowerCase()) {
+                throw new Error("Connected wallet does not match company wallet address.");
+            }
+
+            if (!publicClient) {
+                throw new Error("Blockchain client not available. Please refresh and try again.");
+            }
+
+            const amountValue = parseFloat(amountLocked);
+            if (!Number.isFinite(amountValue) || amountValue <= 0) {
+                throw new Error("Please enter a valid ETH amount.");
+            }
+
+            const durationValue = Number(durationDays);
+            if (!Number.isInteger(durationValue) || durationValue <= 0) {
+                throw new Error("Duration must be a positive number of days.");
+            }
+
             const labelsArr = labels.split(",").map((l) => l.trim()).filter(Boolean);
             if (labelsArr.length < 2) {
                 alert("At least 2 labels required");
                 setSaving(false);
                 return;
             }
+
+            if (chainId !== sepolia.id) {
+                await switchChainAsync({ chainId: sepolia.id });
+            }
+
+            const datasetId = crypto.randomUUID();
+            const txHash = await writeContractAsync({
+                address: CONTRACT_ADDRESS,
+                abi: CONTRACT_ABI,
+                functionName: "createDataset",
+                args: [datasetId, BigInt(durationValue)],
+                value: parseEther(amountLocked),
+            });
+
+            await publicClient.waitForTransactionReceipt({ hash: txHash });
+
             const res = await api.company.createPost(token, {
+                datasetId,
                 datasetName,
                 labels: labelsArr,
                 instructions: instructions || undefined,
-                amountLocked: parseFloat(amountLocked),
+                amountLocked: amountValue,
+                durationDays: durationValue,
+                transactionHash: txHash,
                 verificationRequired,
             });
             setPosts((prev) => [{ ...res.post, labeledImages: 0, verifiedImages: 0, progress: "0.0" }, ...prev]);
@@ -53,6 +108,7 @@ export default function CompanyPosts() {
             setLabels("");
             setInstructions("");
             setAmountLocked("");
+            setDurationDays("30");
         } catch (err: any) {
             alert(err.message);
         } finally {
@@ -107,6 +163,18 @@ export default function CompanyPosts() {
                                 required
                                 className="w-full px-4 py-3 rounded-xl bg-surface border border-border focus:border-primary focus:outline-none text-sm"
                                 placeholder="0.1"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs text-muted mb-1.5 font-medium">Dataset Duration (days)</label>
+                            <input
+                                type="number"
+                                min="1"
+                                value={durationDays}
+                                onChange={(e) => setDurationDays(e.target.value)}
+                                required
+                                className="w-full px-4 py-3 rounded-xl bg-surface border border-border focus:border-primary focus:outline-none text-sm"
+                                placeholder="30"
                             />
                         </div>
                     </div>
