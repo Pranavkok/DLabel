@@ -2,7 +2,7 @@ import type { Response } from "express";
 import prisma from "../lib/prisma.js";
 import type { AuthRequest } from "../middleware/auth.js";
 import { getReputationTier, getMultiplier } from "../utils/reputation.js";
-import { calculateTotalEarnings } from "../utils/rewards.js";
+import { calculateTotalEarnings, getPendingMap } from "../utils/rewards.js";
 
 // ============================================
 // GET /api/user/dashboard
@@ -221,6 +221,9 @@ export async function getTransactions(req: AuthRequest, res: Response) {
 // ============================================
 // POST /api/user/claim
 // ============================================
+// ============================================
+// POST /api/user/claim
+// ============================================
 export async function claimEarnings(req: AuthRequest, res: Response) {
     try {
         const userId = req.userId!;
@@ -231,10 +234,9 @@ export async function claimEarnings(req: AuthRequest, res: Response) {
 
         if (!user) return res.status(404).json({ error: "User not found" });
 
-        const totalEarnings = await calculateTotalEarnings(userId);
-        const pendingClaim = totalEarnings - Number(user.tokensClaimed);
+        const pendingClaims = await getPendingMap(userId);
 
-        if (pendingClaim <= 0) {
+        if (pendingClaims.length === 0) {
             return res.status(400).json({ error: "No earnings to claim" });
         }
 
@@ -242,33 +244,47 @@ export async function claimEarnings(req: AuthRequest, res: Response) {
         const { generateClaimSignature } = await import("../utils/signature.js");
         const { ethers } = await import("ethers");
 
-        const nonce = Date.now(); // Simple nonce using timestamp
-        const amountInWei = ethers.parseEther(pendingClaim.toFixed(18));
+        const claims = [];
 
-        const signature = await generateClaimSignature(
-            user.walletAddress,
-            "all-datasets", // Combined claim across all datasets
-            amountInWei,
-            nonce
-        );
+        for (const claim of pendingClaims) {
+            const nonce = Date.now() + Math.floor(Math.random() * 1000); // Unique nonce
+            const amountInWei = ethers.parseEther(claim.amount.toFixed(18));
 
-        // Create pending transaction
-        const transaction = await prisma.transaction.create({
-            data: {
-                userId: user.id,
-                type: "WITHDRAWAL",
-                amount: pendingClaim,
-                status: "PENDING",
-                metadata: { nonce, amountInWei: amountInWei.toString() },
-            },
-        });
+            // For contract, we use postId as the datasetId to ensure uniqueness
+            // Ideally, companies should create datasets using postId as the ID on-chain.
+            const contractDatasetId = claim.postId;
+
+            const signature = await generateClaimSignature(
+                user.walletAddress,
+                contractDatasetId,
+                amountInWei,
+                nonce
+            );
+
+            // Create pending transaction
+            const transaction = await prisma.transaction.create({
+                data: {
+                    userId: user.id,
+                    postId: claim.postId,
+                    type: "WITHDRAWAL",
+                    amount: claim.amount,
+                    status: "PENDING",
+                    metadata: { nonce, amountInWei: amountInWei.toString(), datasetId: contractDatasetId },
+                },
+            });
+
+            claims.push({
+                transactionId: transaction.id,
+                datasetId: contractDatasetId,
+                amount: claim.amount,
+                amountInWei: amountInWei.toString(),
+                nonce,
+                signature,
+            });
+        }
 
         return res.json({
-            transactionId: transaction.id,
-            amount: pendingClaim,
-            amountInWei: amountInWei.toString(),
-            nonce,
-            signature,
+            claims,
             walletAddress: user.walletAddress,
         });
     } catch (error) {

@@ -3,7 +3,7 @@
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
-import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useWriteContract, usePublicClient } from "wagmi";
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from "@/lib/contract";
 
 export default function EarningsPage() {
@@ -12,10 +12,10 @@ export default function EarningsPage() {
     const [transactions, setTransactions] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [claiming, setClaiming] = useState(false);
-    const [claimResult, setClaimResult] = useState<any>(null);
 
-    const { writeContract, data: txHash, isPending } = useWriteContract();
-    const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash: txHash });
+    // We use writeContractAsync for imperative calls
+    const { writeContractAsync } = useWriteContract();
+    const publicClient = usePublicClient();
 
     useEffect(() => {
         if (!token) return;
@@ -29,37 +29,52 @@ export default function EarningsPage() {
             .finally(() => setLoading(false));
     }, [token]);
 
-    // After blockchain confirmation, notify backend
-    useEffect(() => {
-        if (isConfirmed && txHash && claimResult?.transactionId && token) {
-            api.transactions.confirm(token, claimResult.transactionId, txHash)
-                .then(() => {
-                    // Refresh data
-                    api.user.earnings(token).then(setEarningsData);
-                    api.user.transactions(token).then((t) => setTransactions(t.transactions));
-                    setClaiming(false);
-                    setClaimResult(null);
-                })
-                .catch(console.error);
-        }
-    }, [isConfirmed, txHash]);
-
     async function handleClaim() {
-        if (!token || claiming) return;
+        if (!token || claiming || !publicClient) return;
         setClaiming(true);
         try {
             const res = await api.user.claim(token);
-            setClaimResult(res);
 
-            // Call smart contract
-            writeContract({
-                address: CONTRACT_ADDRESS,
-                abi: CONTRACT_ABI,
-                functionName: "claimTokens",
-                args: ["all-datasets", BigInt(res.amountInWei), BigInt(res.nonce), res.signature as `0x${string}`],
-            });
+            if (!res.claims || res.claims.length === 0) {
+                alert("No claims available");
+                setClaiming(false);
+                return;
+            }
+
+            let completed = 0;
+            const total = res.claims.length;
+
+            for (const claim of res.claims) {
+                // Call smart contract
+                const txHash = await writeContractAsync({
+                    address: CONTRACT_ADDRESS,
+                    abi: CONTRACT_ABI,
+                    functionName: "claimTokens",
+                    args: [claim.datasetId, BigInt(claim.amountInWei), BigInt(claim.nonce), claim.signature as `0x${string}`],
+                });
+
+                // Wait for confirmation
+                await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+                // Confirm with backend
+                await api.transactions.confirm(token, claim.transactionId, txHash);
+
+                completed++;
+            }
+
+            // Refresh data
+            const [e, t] = await Promise.all([
+                api.user.earnings(token),
+                api.user.transactions(token)
+            ]);
+            setEarningsData(e);
+            setTransactions(t.transactions);
+
+            alert(`Successfully claimed ${completed} datasets!`);
         } catch (err: any) {
+            console.error(err);
             alert(err.message || "Claim failed");
+        } finally {
             setClaiming(false);
         }
     }
@@ -97,16 +112,12 @@ export default function EarningsPage() {
                     {earningsData.pendingClaim > 0 && (
                         <button
                             onClick={handleClaim}
-                            disabled={claiming || isPending || isConfirming}
+                            disabled={claiming}
                             className="mt-3 w-full py-2.5 rounded-xl bg-gradient-to-r from-primary to-secondary text-white text-sm font-semibold btn-hover glow-primary disabled:opacity-50"
                         >
-                            {isPending
-                                ? "Confirm in Wallet..."
-                                : isConfirming
-                                    ? "Confirming on Chain..."
-                                    : claiming
-                                        ? "Processing..."
-                                        : "Claim ETH →"}
+                            {claiming
+                                ? "Processing Claims..."
+                                : "Claim ETH →"}
                         </button>
                     )}
                 </div>

@@ -76,7 +76,7 @@ export const api = {
         transactions: (token: string) =>
             request<{ transactions: any[] }>("/api/user/transactions", { token }),
         claim: (token: string) =>
-            request<{ transactionId: string; amount: number; amountInWei: string; nonce: number; signature: string; walletAddress: string }>("/api/user/claim", { method: "POST", token }),
+            request<{ claims: { transactionId: string; datasetId: string; amount: number; amountInWei: string; nonce: number; signature: string }[]; walletAddress: string }>("/api/user/claim", { method: "POST", token }),
     },
 
     // ====== LABEL ======
