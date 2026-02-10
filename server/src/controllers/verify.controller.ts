@@ -116,7 +116,7 @@ export async function submitVerification(req: AuthRequest, res: Response) {
         }
 
         // Check if user already verified this image
-        const existingVote = image.verifications.find((v) => v.verifierId === userId);
+        const existingVote = image.verifications.find((v: { verifierId: string }) => v.verifierId === userId);
         if (existingVote) {
             return res.status(400).json({ error: "You have already verified this image" });
         }
@@ -130,16 +130,32 @@ export async function submitVerification(req: AuthRequest, res: Response) {
             },
         });
 
-        // Update verifier stats & reputation
-        const verifier = await prisma.user.findUnique({ where: { id: userId } });
-        if (verifier) {
-            await prisma.user.update({
-                where: { id: userId },
-                data: {
-                    verificationsDone: { increment: 1 },
-                    reputation: calculateReputationChange("VERIFICATION_DONE", verifier.reputation),
-                },
+        // Update verifier stats only (verifier reputation should not change)
+        await prisma.user.update({
+            where: { id: userId },
+            data: {
+                verificationsDone: { increment: 1 },
+            },
+        });
+
+        // Apply immediate reputation impact to labeler based on this vote
+        if (image.labeledBy) {
+            const labeler = await prisma.user.findUnique({
+                where: { id: image.labeledBy },
+                select: { id: true, reputation: true },
             });
+
+            if (labeler) {
+                await prisma.user.update({
+                    where: { id: image.labeledBy },
+                    data: {
+                        reputation: calculateReputationChange(
+                            vote === "YES" ? "LABEL_VERIFIED" : "LABEL_REJECTED",
+                            labeler.reputation
+                        ),
+                    },
+                });
+            }
         }
 
         // Check if we have enough votes to decide
@@ -150,8 +166,8 @@ export async function submitVerification(req: AuthRequest, res: Response) {
         let resultMessage = "Vote recorded. Waiting for more verifications.";
 
         if (allVerifications.length >= REQUIRED_VOTES) {
-            const yesVotes = allVerifications.filter((v) => v.vote === "YES").length;
-            const noVotes = allVerifications.filter((v) => v.vote === "NO").length;
+            const yesVotes = allVerifications.filter((v: { vote: "YES" | "NO" }) => v.vote === "YES").length;
+            const noVotes = allVerifications.filter((v: { vote: "YES" | "NO" }) => v.vote === "NO").length;
 
             if (yesVotes >= MAJORITY_THRESHOLD) {
                 // Label VERIFIED - majority agrees
@@ -160,7 +176,8 @@ export async function submitVerification(req: AuthRequest, res: Response) {
                     data: { status: "VERIFIED" },
                 });
 
-                // Reward the labeler: reputation +10
+                // Reward the labeler with stats/token updates.
+                // Reputation is already updated per vote above.
                 if (image.labeledBy) {
                     const labeler = await prisma.user.findUnique({
                         where: { id: image.labeledBy },
@@ -169,7 +186,6 @@ export async function submitVerification(req: AuthRequest, res: Response) {
                         await prisma.user.update({
                             where: { id: image.labeledBy },
                             data: {
-                                reputation: calculateReputationChange("LABEL_VERIFIED", labeler.reputation),
                                 labelsVerifiedCorrect: { increment: 1 },
                                 tokensEarned: { increment: Number(image.tokenValue) },
                             },
@@ -190,7 +206,8 @@ export async function submitVerification(req: AuthRequest, res: Response) {
                     },
                 });
 
-                // Penalize the labeler: reputation -15
+                // Record incorrect label stats.
+                // Reputation is already updated per vote above.
                 if (image.labeledBy) {
                     const labeler = await prisma.user.findUnique({
                         where: { id: image.labeledBy },
@@ -199,7 +216,6 @@ export async function submitVerification(req: AuthRequest, res: Response) {
                         await prisma.user.update({
                             where: { id: image.labeledBy },
                             data: {
-                                reputation: calculateReputationChange("LABEL_REJECTED", labeler.reputation),
                                 labelsVerifiedIncorrect: { increment: 1 },
                             },
                         });
