@@ -8,9 +8,10 @@ datasource db {
 }
 
 model User {
-  id         String  @id @default(uuid())
-  name       String? @db.VarChar(255)
-  reputation Int     @default(0)
+  id            String  @id @default(uuid())
+  walletAddress String  @unique @map("wallet_address") @db.VarChar(42)
+  name          String? @db.VarChar(255)
+  reputation    Int     @default(0)
 
   labelsSubmitted         Int @default(0) @map("labels_submitted")
   labelsVerifiedCorrect   Int @default(0) @map("labels_verified_correct")
@@ -32,10 +33,11 @@ model User {
 }
 
 model Company {
-  id        String   @id @default(uuid())
-  name      String   @db.VarChar(255)
-  email     String?  @db.VarChar(255)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  id            String   @id @default(uuid())
+  walletAddress String   @unique @map("wallet_address") @db.VarChar(42)
+  name          String   @db.VarChar(255)
+  email         String?  @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
 
   posts        Post[]
   transactions Transaction[]
