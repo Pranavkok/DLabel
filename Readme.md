@@ -12,14 +12,9 @@ So this project solves a real problem in AI: **getting high-quality labeled data
 ## 1. Problem This Project Solves
 
 AI models need labeled data, but traditional labeling platforms have issues:
-- low trust (who did what?)
-- payment transparency problems
-- weak quality control
-
-DataLabel solves this by combining:
-- a verification system (2 out of 3 votes)
-- reputation scoring
-- on-chain ETH-backed funding and claim flow
+We solve two big problems at once:  
+- 1.⁠ ⁠Companies get affordable, high-quality labeled datasets faster and cheaper than traditional services.  
+- 2.Millions of Indian youth who waste hours browsing the web every day can now earn real money with zero special skills.
 
 ## 2. High-Level Solution
 
